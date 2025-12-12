@@ -1,0 +1,10 @@
+{
+  "name": "Java 17 Maven",
+  "build": { "dockerfile": "Dockerfile" },
+  "forwardPorts": [],
+  "extensions": [
+    "vscjava.vscode-java-pack",
+    "redhat.java"
+  ]
+}
+

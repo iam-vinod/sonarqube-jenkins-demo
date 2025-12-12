@@ -1,0 +1,65 @@
+name: CI - build / test / sonar
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-sonar:
+    runs-on: ubuntu-latest
+    env:
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache Maven repo
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+
+      - name: Build and run tests
+        run: mvn -B -DskipTests=false clean test
+
+      - name: Run SonarQube analysis (Maven)
+        run: mvn -B -Dsonar.host.url=${SONAR_HOST_URL} -Dsonar.login=${SONAR_TOKEN} sonar:sonar
+
+      - name: Wait for Sonar Quality Gate
+        run: |
+          set -euo pipefail
+          PROJECT_KEY=$(mvn -q -Dexec.executable=echo -Dexec.args='${project.groupId}:${project.artifactId}' --non-recursive org.codehaus.mojo:exec-maven-plugin:3.1.0:exec)
+          echo "Project key: $PROJECT_KEY"
+          CE_TASK_ID=""
+          for i in {1..30}; do
+            CE_JSON=$(curl -sS -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL}/api/ce/component?component=${PROJECT_KEY}")
+            CE_TASK_ID=$(echo "$CE_JSON" | jq -r '.current?.analysisId // .tasks[0]?.id // empty')
+            if [ -n "$CE_TASK_ID" ]; then break; fi
+            sleep 4
+          done
+          if [ -z "$CE_TASK_ID" ]; then echo "CE task not found" && exit 1; fi
+          for i in {1..60}; do
+            TASK_JSON=$(curl -sS -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL}/api/ce/task?id=${CE_TASK_ID}")
+            STATUS=$(echo "$TASK_JSON" | jq -r '.task.status')
+            echo "Status: $STATUS"
+            if [ "$STATUS" = "SUCCESS" ] || [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CANCELED" ]; then break; fi
+            sleep 4
+          done
+          if [ "$STATUS" != "SUCCESS" ]; then echo "CE task not successful: $STATUS" && exit 1; fi
+          ANALYSIS_ID=$(echo "$TASK_JSON" | jq -r '.task.analysisId')
+          QG_JSON=$(curl -sS -u "${SONAR_TOKEN}:" "${SONAR_HOST_URL}/api/qualitygates/project_status?analysisId=${ANALYSIS_ID}")
+          GATE_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status')
+          echo "Quality Gate status: $GATE_STATUS"
+          if [ "$GATE_STATUS" != "OK" ]; then echo "$QG_JSON" | jq . && exit 1; fi
+
+      - name: Success
+        run: echo "Build + Sonar + Quality Gate passed ✅"
