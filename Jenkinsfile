@@ -31,17 +31,20 @@ pipeline {
 
         stage('Sonar Analysis') {
             steps {
-                sh '''
-                    docker run --rm \
-                      -v "$PWD":/app \
-                      -v "$HOME/.m2":/root/.m2 \
-                      -w /app \
-                      maven:3.9.0-openjdk-17 \
-                      mvn -B sonar:sonar \
-                      -Dsonar.projectKey=sonarqube-jenkins-demo \
-                      -Dsonar.host.url=${SONAR_HOST} \
-                      -Dsonar.login=${SONAR_TOKEN}
-                '''
+                // Must match the name configured in Jenkins → SonarQube servers
+                withSonarQubeEnv('SonarQube') {
+                    sh '''
+                        docker run --rm \
+                          -v "$PWD":/app \
+                          -v "$HOME/.m2":/root/.m2 \
+                          -w /app \
+                          maven:3.9.0-openjdk-17 \
+                          mvn -B sonar:sonar \
+                          -Dsonar.projectKey=sonarqube-jenkins-demo \
+                          -Dsonar.host.url=${SONAR_HOST} \
+                          -Dsonar.login=${SONAR_TOKEN}
+                    '''
+                }
             }
         }
 
